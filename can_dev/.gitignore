@@ -1,0 +1,59 @@
+############################
+# Build outputs
+############################
+Debug/
+Release/
+Build/
+
+############################
+# Object / binary files
+############################
+*.o
+*.obj
+*.elf
+*.map
+*.hex
+*.bin
+*.list
+*.d
+*.su
+*.lss
+*.siz
+
+############################
+# Linker / debug artifacts
+############################
+*.ilk
+*.exp
+*.idb
+*.pdb
+*.dSYM/
+*.dwo
+
+############################
+# CDT / Make artifacts
+############################
+makefile
+objects.mk
+objects.list
+sources.mk
+subdir.mk
+
+############################
+# STM32CubeMX generated helpers
+############################
+src/**/cmake/stm32cubemx/
+
+############################
+# CMake (if enabled)
+############################
+CMakeCache.txt
+CMakeFiles/
+CMakeScripts/
+cmake_install.cmake
+CTestTestfile.cmake
+compile_commands.json
+_deps/
+*-prefix/
+CMakeUserPresets.json
+
