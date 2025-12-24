@@ -36,14 +36,17 @@
 
 /* Private macro -------------------------------------------------------------*/
 /* USER CODE BEGIN PM */
-
+#define ID_LIST_LEN 2
 /* USER CODE END PM */
 
 /* Private variables ---------------------------------------------------------*/
 CAN_HandleTypeDef hcan1;
 
 /* USER CODE BEGIN PV */
-
+CANDevice_t canDV;
+uint16_t rxIdList[ID_LIST_LEN] = {0x110, 0x120};
+uint32_t txID = 0x120;
+uint8_t txData[8];
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -51,7 +54,7 @@ void SystemClock_Config(void);
 static void MX_GPIO_Init(void);
 static void MX_CAN1_Init(void);
 /* USER CODE BEGIN PFP */
-
+void can_rx_callback(CANDevice_t *device);
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
@@ -90,6 +93,10 @@ int main(void)
   MX_GPIO_Init();
   MX_CAN1_Init();
   /* USER CODE BEGIN 2 */
+
+  can_config_filter(&canDV, rxIdList, ID_LIST_LEN);
+  device_can_init(&canDV, &hcan1);
+  link_rx_callback(&canDV, can_rx_callback);
 
   /* USER CODE END 2 */
 
@@ -243,7 +250,9 @@ static void MX_GPIO_Init(void)
 }
 
 /* USER CODE BEGIN 4 */
-
+void can_rx_callback(CANDevice_t *device) {
+  return; // TOOD
+}
 /* USER CODE END 4 */
 
 /**
