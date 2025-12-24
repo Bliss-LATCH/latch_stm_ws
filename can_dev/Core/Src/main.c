@@ -46,7 +46,8 @@ CAN_HandleTypeDef hcan1;
 CANDevice_t canDV;
 uint16_t rxIdList[ID_LIST_LEN] = {0x110, 0x120};
 uint32_t txID = 0x120;
-uint8_t txData[8];
+uint8_t txData[8] = {0x12, 0x0f};
+uint8_t txLen = 2;
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -94,9 +95,13 @@ int main(void)
   MX_CAN1_Init();
   /* USER CODE BEGIN 2 */
 
-  can_config_filter(&canDV, rxIdList, ID_LIST_LEN);
   device_can_init(&canDV, &hcan1);
+  can_config_filter(&canDV, rxIdList, ID_LIST_LEN);
   link_rx_callback(&canDV, can_rx_callback);
+
+  HAL_Delay(500);
+
+  transmit_can_data(&canDV, 0x120, txData, txLen);
 
   /* USER CODE END 2 */
 
@@ -182,7 +187,7 @@ static void MX_CAN1_Init(void)
   /* USER CODE END CAN1_Init 1 */
   hcan1.Instance = CAN1;
   hcan1.Init.Prescaler = 5;
-  hcan1.Init.Mode = CAN_MODE_NORMAL;
+  hcan1.Init.Mode = CAN_MODE_LOOPBACK;
   hcan1.Init.SyncJumpWidth = CAN_SJW_1TQ;
   hcan1.Init.TimeSeg1 = CAN_BS1_14TQ;
   hcan1.Init.TimeSeg2 = CAN_BS2_3TQ;
@@ -251,7 +256,8 @@ static void MX_GPIO_Init(void)
 
 /* USER CODE BEGIN 4 */
 void can_rx_callback(CANDevice_t *device) {
-  return; // TOOD
+	uint8_t *tmp= device->rxBuffer;
+	return;
 }
 /* USER CODE END 4 */
 
