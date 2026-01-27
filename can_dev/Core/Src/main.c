@@ -46,8 +46,8 @@ CAN_HandleTypeDef hcan1;
 CANDevice_t canDV;
 uint16_t rxIdList[ID_LIST_LEN] = {0x110, 0x120};
 uint32_t txID = 0x120;
-uint8_t txData[8] = {0x12, 0x0f};
-uint8_t txLen = 2;
+uint8_t txData[8] = {0x12, 0x0f, 0x23, 0x33, 0x23};
+uint8_t txLen = 5;
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -99,16 +99,15 @@ int main(void)
   can_config_filter(&canDV, rxIdList, ID_LIST_LEN);
   link_rx_callback(&canDV, can_rx_callback);
 
-  HAL_Delay(500);
-
-  transmit_can_data(&canDV, 0x120, txData, txLen);
-
   /* USER CODE END 2 */
 
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
   while (1)
   {
+	  HAL_Delay(500);
+
+	  transmit_can_data(&canDV, 0x120, txData, txLen);
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
