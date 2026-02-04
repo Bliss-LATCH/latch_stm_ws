@@ -12,6 +12,7 @@ RM := rm -rf
 -include Drivers/STM32F4xx_HAL_Driver/Src/subdir.mk
 -include Core/Startup/subdir.mk
 -include Core/Src/subdir.mk
+-include CAN/Src/subdir.mk
 -include objects.mk
 
 ifneq ($(MAKECMDGOALS),clean)
@@ -60,8 +61,8 @@ all: main-build
 main-build: elevation.elf secondary-outputs
 
 # Tool invocations
-elevation.elf elevation.map: $(OBJS) $(USER_OBJS) /home/nick/dev/LATCH/latch_stm_ws/elevation/STM32F446RETX_FLASH.ld makefile objects.list $(OPTIONAL_TOOL_DEPS)
-	arm-none-eabi-gcc -o "elevation.elf" @"objects.list" $(USER_OBJS) $(LIBS) -mcpu=cortex-m4 -T"/home/nick/dev/LATCH/latch_stm_ws/elevation/STM32F446RETX_FLASH.ld" --specs=nosys.specs -Wl,-Map="elevation.map" -Wl,--gc-sections -static --specs=nano.specs -mfpu=fpv4-sp-d16 -mfloat-abi=hard -mthumb -Wl,--start-group -lc -lm -Wl,--end-group
+elevation.elf elevation.map: $(OBJS) $(USER_OBJS) /Users/alicechen/LATCH/latch_stm_ws/elevation/STM32F446RETX_FLASH.ld makefile objects.list $(OPTIONAL_TOOL_DEPS)
+	arm-none-eabi-gcc -o "elevation.elf" @"objects.list" $(USER_OBJS) $(LIBS) -mcpu=cortex-m4 -T"/Users/alicechen/LATCH/latch_stm_ws/elevation/STM32F446RETX_FLASH.ld" --specs=nosys.specs -Wl,-Map="elevation.map" -Wl,--gc-sections -static --specs=nano.specs -mfpu=fpv4-sp-d16 -mfloat-abi=hard -mthumb -Wl,--start-group -lc -lm -Wl,--end-group
 	@echo 'Finished building target: $@'
 	@echo ' '
 
