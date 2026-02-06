@@ -53,6 +53,7 @@ static void MX_CAN1_Init(void);
 /* USER CODE BEGIN PFP */
 void incrementSteps(int steps);
 void decrementSteps(int steps);
+double dist_to_steps(double height);
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
@@ -82,6 +83,12 @@ void decrementSteps(int steps) {
 
 	}
 }
+
+double dist_to_steps(double height){
+	double conv_factor = 769230.7692; // TO-DO: Calculate
+	return conv_factor * height;
+}
+
 /* USER CODE END 0 */
 
 /**
@@ -120,8 +127,11 @@ int main(void)
 
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
+  double steps = dist_to_steps(0.03);
   while (1)
   {
+	 decrementSteps(steps);
+	 HAL_Delay(200);
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
