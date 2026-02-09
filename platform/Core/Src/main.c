@@ -411,7 +411,7 @@ static void setVerticalAngle(float angle) {
 /* USER CODE END 4 */
 
 /**
-  * @brief  This function is executed in case floatof error occurrence.
+  * @brief  This function is executed in case of error occurrence.
   * @retval None
   */
 void Error_Handler(void)

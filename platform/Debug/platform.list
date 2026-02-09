@@ -1271,7 +1271,7 @@ static void setVerticalAngle(float angle) {
 
 08000ae0 <Error_Handler>:
 /**
-  * @brief  This function is executed in case floatof error occurrence.
+  * @brief  This function is executed in case of error occurrence.
   * @retval None
   */
 void Error_Handler(void)
