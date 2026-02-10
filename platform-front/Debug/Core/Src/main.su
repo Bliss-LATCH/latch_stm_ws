@@ -1,0 +1,12 @@
+../Core/Src/main.c:108:5:main	8	static
+../Core/Src/main.c:179:6:SystemClock_Config	88	static
+../Core/Src/main.c:234:13:MX_CAN1_Init	8	static
+../Core/Src/main.c:271:13:MX_TIM1_Init	80	static
+../Core/Src/main.c:336:13:MX_TIM3_Init	48	static
+../Core/Src/main.c:385:13:MX_GPIO_Init	48	static
+../Core/Src/main.c:437:12:linear_map	40	static
+../Core/Src/main.c:443:13:set_horizontal_angle	16	static
+../Core/Src/main.c:448:13:set_vertical_angle	16	static
+../Core/Src/main.c:453:13:can_rx_callback	24	static
+../Core/Src/main.c:466:13:proccess_can_data	24	static
+../Core/Src/main.c:487:6:Error_Handler	4	static,ignoring_inline_asm
