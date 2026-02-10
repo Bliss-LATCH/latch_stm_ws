@@ -1,5 +1,0 @@
-../CAN/Src/can_device.c:17:6:can_config_filter	72	static
-../CAN/Src/can_device.c:71:6:device_can_init	24	static
-../CAN/Src/can_device.c:99:6:link_rx_callback	16	static
-../CAN/Src/can_device.c:104:6:HAL_CAN_RxFifo0MsgPendingCallback	16	static
-../CAN/Src/can_device.c:125:6:transmit_can_data	24	static
