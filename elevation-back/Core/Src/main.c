@@ -31,16 +31,15 @@
 
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
+// subsystem constants
+#define MIN_HEIGHT 0.5 // TODO needs to be calculated and set based on physical measurements (meters)
+#define MAX_HEIGHT 1.0 // TODO needs to be calculated and set based on physical measurements (meters)
 
-// defines for linear transformation between servo angle and CCR for desired pulse width
-#define MIN_ANGLE 0
-#define MAX_ANGLE 270
-#define MIN_CCR 9009
-#define MAX_CCR 45044
+#define CONV_FACTOR 769230.7692
 
 // ---------------- CAN message constants (can be added to form message) ----------------
 // device id bits [8:5]
-#define CAN_DEV_ID 0x0E0
+#define CAN_DEV_ID 0x100
 
 // priority bits (first two bits of CAN ID)
 #define CAN_PR_CRIT 0x000 // 0b00
@@ -49,13 +48,12 @@
 #define CAN_PR_DBUG 0x600 // 0b11
 
 // message type bits (last five bits)
-#define FILLER_MESSAGE 0x000 // currently no message to send back from this board to bus
+#define FILLER_MESSAGE 0x000
 
 // CAN receive filter IDs
 #define CAN_MSG_GLOBAL_STOP 0x000
 #define CAN_MSG_HEARTBEAT 0x001
-#define CAN_MSG_HRZ_ANG 0x226
-#define CAN_MSG_VRT_ANG 0x227
+#define CAN_MSG_SET_HEIGHT 0x224
 
 /* USER CODE END PD */
 
@@ -67,33 +65,26 @@
 /* Private variables ---------------------------------------------------------*/
 CAN_HandleTypeDef hcan1;
 
-TIM_HandleTypeDef htim1;
-TIM_HandleTypeDef htim8;
-
 /* USER CODE BEGIN PV */
-CANDevice_t can_dev;
-uint16_t rx_id_list[] = {CAN_MSG_GLOBAL_STOP, CAN_MSG_HEARTBEAT, CAN_MSG_HRZ_ANG, CAN_MSG_VRT_ANG};
-
+float current_height = 0; // should be the height of the platform and is respective to both motors
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
 void SystemClock_Config(void);
 static void MX_GPIO_Init(void);
 static void MX_CAN1_Init(void);
-static void MX_TIM1_Init(void);
-static void MX_TIM8_Init(void);
 /* USER CODE BEGIN PFP */
 // CAN function callback plus helpers
 static void can_rx_callback(CANDevice_t *device);
 static void proccess_can_data(uint16_t message_id, uint8_t *data);
 
-// subsystem control functions
-static void set_horizontal_angle(float angle);
-static void set_vertical_angle(float angle);
+
+// stepper control functions
+static void increment_steps(int steps);
+static void decrement_steps(int steps);
 
 // helper functions
-static int linear_map(float input, float in_min, float in_max, float out_min, float out_max);
-
+static int dist_to_steps(double height);
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
@@ -131,21 +122,7 @@ int main(void)
   /* Initialize all configured peripherals */
   MX_GPIO_Init();
   MX_CAN1_Init();
-  MX_TIM1_Init();
-  MX_TIM8_Init();
   /* USER CODE BEGIN 2 */
-  // start CAN device
-//  device_can_init(&can_dev, &hcan1);
-//
-//  // config the CAN device filter banks
-//  can_config_filter(&can_dev, rx_id_list, sizeof(rx_id_list));
-//
-//  // link the can rx callback
-//  link_rx_callback(&can_dev, can_rx_callback);
-
-  // start the servo PWMs
-  HAL_TIM_PWM_Start(&htim1, TIM_CHANNEL_1);
-  HAL_TIM_PWM_Start(&htim8, TIM_CHANNEL_1);
 
   /* USER CODE END 2 */
 
@@ -153,17 +130,6 @@ int main(void)
   /* USER CODE BEGIN WHILE */
   while (1)
   {
-	  HAL_Delay(1000);
-	  set_horizontal_angle(90);
-	  set_vertical_angle(90);
-
-	  HAL_Delay(1000);
-	  set_horizontal_angle(180);
-	  set_vertical_angle(180);
-
-	  HAL_Delay(1000);
-	  set_horizontal_angle(0);
-	  set_vertical_angle(0);
 
     /* USER CODE END WHILE */
 
@@ -257,136 +223,6 @@ static void MX_CAN1_Init(void)
 }
 
 /**
-  * @brief TIM1 Initialization Function
-  * @param None
-  * @retval None
-  */
-static void MX_TIM1_Init(void)
-{
-
-  /* USER CODE BEGIN TIM1_Init 0 */
-
-  /* USER CODE END TIM1_Init 0 */
-
-  TIM_MasterConfigTypeDef sMasterConfig = {0};
-  TIM_OC_InitTypeDef sConfigOC = {0};
-  TIM_BreakDeadTimeConfigTypeDef sBreakDeadTimeConfig = {0};
-
-  /* USER CODE BEGIN TIM1_Init 1 */
-
-  /* USER CODE END TIM1_Init 1 */
-  htim1.Instance = TIM1;
-  htim1.Init.Prescaler = 9;
-  htim1.Init.CounterMode = TIM_COUNTERMODE_UP;
-  htim1.Init.Period = 54054;
-  htim1.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
-  htim1.Init.RepetitionCounter = 0;
-  htim1.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_DISABLE;
-  if (HAL_TIM_PWM_Init(&htim1) != HAL_OK)
-  {
-    Error_Handler();
-  }
-  sMasterConfig.MasterOutputTrigger = TIM_TRGO_RESET;
-  sMasterConfig.MasterSlaveMode = TIM_MASTERSLAVEMODE_DISABLE;
-  if (HAL_TIMEx_MasterConfigSynchronization(&htim1, &sMasterConfig) != HAL_OK)
-  {
-    Error_Handler();
-  }
-  sConfigOC.OCMode = TIM_OCMODE_PWM1;
-  sConfigOC.Pulse = 0;
-  sConfigOC.OCPolarity = TIM_OCPOLARITY_HIGH;
-  sConfigOC.OCNPolarity = TIM_OCNPOLARITY_HIGH;
-  sConfigOC.OCFastMode = TIM_OCFAST_DISABLE;
-  sConfigOC.OCIdleState = TIM_OCIDLESTATE_RESET;
-  sConfigOC.OCNIdleState = TIM_OCNIDLESTATE_RESET;
-  if (HAL_TIM_PWM_ConfigChannel(&htim1, &sConfigOC, TIM_CHANNEL_1) != HAL_OK)
-  {
-    Error_Handler();
-  }
-  sBreakDeadTimeConfig.OffStateRunMode = TIM_OSSR_DISABLE;
-  sBreakDeadTimeConfig.OffStateIDLEMode = TIM_OSSI_DISABLE;
-  sBreakDeadTimeConfig.LockLevel = TIM_LOCKLEVEL_OFF;
-  sBreakDeadTimeConfig.DeadTime = 0;
-  sBreakDeadTimeConfig.BreakState = TIM_BREAK_DISABLE;
-  sBreakDeadTimeConfig.BreakPolarity = TIM_BREAKPOLARITY_HIGH;
-  sBreakDeadTimeConfig.AutomaticOutput = TIM_AUTOMATICOUTPUT_DISABLE;
-  if (HAL_TIMEx_ConfigBreakDeadTime(&htim1, &sBreakDeadTimeConfig) != HAL_OK)
-  {
-    Error_Handler();
-  }
-  /* USER CODE BEGIN TIM1_Init 2 */
-
-  /* USER CODE END TIM1_Init 2 */
-  HAL_TIM_MspPostInit(&htim1);
-
-}
-
-/**
-  * @brief TIM8 Initialization Function
-  * @param None
-  * @retval None
-  */
-static void MX_TIM8_Init(void)
-{
-
-  /* USER CODE BEGIN TIM8_Init 0 */
-
-  /* USER CODE END TIM8_Init 0 */
-
-  TIM_MasterConfigTypeDef sMasterConfig = {0};
-  TIM_OC_InitTypeDef sConfigOC = {0};
-  TIM_BreakDeadTimeConfigTypeDef sBreakDeadTimeConfig = {0};
-
-  /* USER CODE BEGIN TIM8_Init 1 */
-
-  /* USER CODE END TIM8_Init 1 */
-  htim8.Instance = TIM8;
-  htim8.Init.Prescaler = 9;
-  htim8.Init.CounterMode = TIM_COUNTERMODE_UP;
-  htim8.Init.Period = 54054;
-  htim8.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
-  htim8.Init.RepetitionCounter = 0;
-  htim8.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_DISABLE;
-  if (HAL_TIM_PWM_Init(&htim8) != HAL_OK)
-  {
-    Error_Handler();
-  }
-  sMasterConfig.MasterOutputTrigger = TIM_TRGO_RESET;
-  sMasterConfig.MasterSlaveMode = TIM_MASTERSLAVEMODE_DISABLE;
-  if (HAL_TIMEx_MasterConfigSynchronization(&htim8, &sMasterConfig) != HAL_OK)
-  {
-    Error_Handler();
-  }
-  sConfigOC.OCMode = TIM_OCMODE_PWM1;
-  sConfigOC.Pulse = 0;
-  sConfigOC.OCPolarity = TIM_OCPOLARITY_HIGH;
-  sConfigOC.OCNPolarity = TIM_OCNPOLARITY_HIGH;
-  sConfigOC.OCFastMode = TIM_OCFAST_DISABLE;
-  sConfigOC.OCIdleState = TIM_OCIDLESTATE_RESET;
-  sConfigOC.OCNIdleState = TIM_OCNIDLESTATE_RESET;
-  if (HAL_TIM_PWM_ConfigChannel(&htim8, &sConfigOC, TIM_CHANNEL_1) != HAL_OK)
-  {
-    Error_Handler();
-  }
-  sBreakDeadTimeConfig.OffStateRunMode = TIM_OSSR_DISABLE;
-  sBreakDeadTimeConfig.OffStateIDLEMode = TIM_OSSI_DISABLE;
-  sBreakDeadTimeConfig.LockLevel = TIM_LOCKLEVEL_OFF;
-  sBreakDeadTimeConfig.DeadTime = 0;
-  sBreakDeadTimeConfig.BreakState = TIM_BREAK_DISABLE;
-  sBreakDeadTimeConfig.BreakPolarity = TIM_BREAKPOLARITY_HIGH;
-  sBreakDeadTimeConfig.AutomaticOutput = TIM_AUTOMATICOUTPUT_DISABLE;
-  if (HAL_TIMEx_ConfigBreakDeadTime(&htim8, &sBreakDeadTimeConfig) != HAL_OK)
-  {
-    Error_Handler();
-  }
-  /* USER CODE BEGIN TIM8_Init 2 */
-
-  /* USER CODE END TIM8_Init 2 */
-  HAL_TIM_MspPostInit(&htim8);
-
-}
-
-/**
   * @brief GPIO Initialization Function
   * @param None
   * @retval None
@@ -407,19 +243,14 @@ static void MX_GPIO_Init(void)
   /*Configure GPIO pin Output Level */
   HAL_GPIO_WritePin(LD2_GPIO_Port, LD2_Pin, GPIO_PIN_RESET);
 
+  /*Configure GPIO pin Output Level */
+  HAL_GPIO_WritePin(GPIOC, STEP_OUTPUT_Pin|STEP_DIR_Pin, GPIO_PIN_SET);
+
   /*Configure GPIO pin : B1_Pin */
   GPIO_InitStruct.Pin = B1_Pin;
   GPIO_InitStruct.Mode = GPIO_MODE_IT_FALLING;
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   HAL_GPIO_Init(B1_GPIO_Port, &GPIO_InitStruct);
-
-  /*Configure GPIO pin : PA0 */
-  GPIO_InitStruct.Pin = GPIO_PIN_0;
-  GPIO_InitStruct.Mode = GPIO_MODE_AF_PP;
-  GPIO_InitStruct.Pull = GPIO_NOPULL;
-  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
-  GPIO_InitStruct.Alternate = GPIO_AF1_TIM2;
-  HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
 
   /*Configure GPIO pins : USART_TX_Pin USART_RX_Pin */
   GPIO_InitStruct.Pin = USART_TX_Pin|USART_RX_Pin;
@@ -436,26 +267,48 @@ static void MX_GPIO_Init(void)
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
   HAL_GPIO_Init(LD2_GPIO_Port, &GPIO_InitStruct);
 
+  /*Configure GPIO pins : STEP_OUTPUT_Pin STEP_DIR_Pin */
+  GPIO_InitStruct.Pin = STEP_OUTPUT_Pin|STEP_DIR_Pin;
+  GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
+  GPIO_InitStruct.Pull = GPIO_PULLDOWN;
+  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
+  HAL_GPIO_Init(GPIOC, &GPIO_InitStruct);
+
   /* USER CODE BEGIN MX_GPIO_Init_2 */
 
   /* USER CODE END MX_GPIO_Init_2 */
 }
 
 /* USER CODE BEGIN 4 */
-// map an input from on range to another, both ranges must be a linear scale
-static int linear_map(float input, float in_min, float in_max, float out_min, float out_max) {
-	float frac = (out_max - out_min) / (in_max - in_min);
-	return out_min + frac * (input - in_min);
+static void increment_steps(int steps) {
+	HAL_GPIO_WritePin(GPIOC, STEP_DIR_Pin, GPIO_PIN_RESET); // DIR increamnt
+	HAL_Delay(0.100); // 100 ns delay (hold time)
+
+	for(int i = 0; i < steps; ++i) {
+		HAL_GPIO_WritePin(GPIOC, STEP_OUTPUT_Pin, GPIO_PIN_SET); // send pulse high
+		HAL_Delay(0.200); // 200 ns delay
+		HAL_GPIO_WritePin(GPIOC, STEP_OUTPUT_Pin, GPIO_PIN_RESET); // send pulse low
+		HAL_Delay(0.200); // 200 ns delay
+
+	}
 }
 
-// set the horizontal platform angle
-static void set_horizontal_angle(float angle) {
-	htim1.Instance->CCR1 = linear_map(angle, MIN_ANGLE, MAX_ANGLE, MIN_CCR, MAX_CCR);
+static void decrement_steps(int steps) {
+	HAL_GPIO_WritePin(GPIOC, STEP_DIR_Pin, GPIO_PIN_SET); // DIR increamnt
+	HAL_Delay(0.100); // 100 ns delay (hold time)
+
+	for(int i = 0; i < steps; ++i) {
+		HAL_GPIO_WritePin(GPIOC, STEP_OUTPUT_Pin, GPIO_PIN_SET); // send pulse low
+		HAL_Delay(0.200); // 200 ns delay
+		HAL_GPIO_WritePin(GPIOC, STEP_OUTPUT_Pin, GPIO_PIN_RESET); // send pulse high
+		HAL_Delay(0.200); // 200 ns delay
+
+	}
 }
 
-// set the vertical platform angle
-static void set_vertical_angle(float angle) {
-	htim8.Instance->CCR1 = linear_map(angle, MIN_ANGLE, MAX_ANGLE, MIN_CCR, MAX_CCR);
+static int dist_to_steps(double height){
+	int steps = CONV_FACTOR * height;
+	return abs(steps);
 }
 
 // callback for receiving CAN data
@@ -478,13 +331,18 @@ static void proccess_can_data(uint16_t message_id, uint8_t *data) {
     // Copy the 4 bytes back into a float variable
     memcpy(&received_val, data, sizeof(float));
 
-    switch (message_id) {
-        case CAN_MSG_HRZ_ANG:
-            set_horizontal_angle(received_val);
-            break;
-        case CAN_MSG_VRT_ANG:
-            set_vertical_angle(received_val);
-            break;
+    if (received_val < MAX_HEIGHT && received_val > MIN_HEIGHT) {
+		switch (message_id) {
+			case CAN_MSG_SET_HEIGHT:
+				float height_diff = received_val - current_height;
+				int steps = dist_to_steps(height_diff);
+				if (height_diff > 0) {
+					increment_steps(steps);
+				} else {
+					decrement_steps(steps);
+				}
+				break;
+		}
     }
 }
 /* USER CODE END 4 */
