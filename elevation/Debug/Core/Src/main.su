@@ -1,5 +1,10 @@
-../Core/Src/main.c:58:6:incrementSteps	24	static
-../Core/Src/main.c:75:5:main	8	static
-../Core/Src/main.c:119:6:SystemClock_Config	88	static
-../Core/Src/main.c:167:13:MX_GPIO_Init	48	static
-../Core/Src/main.c:227:6:Error_Handler	4	static,ignoring_inline_asm
+../Core/Src/main.c:99:5:main	8	static
+../Core/Src/main.c:145:6:SystemClock_Config	88	static
+../Core/Src/main.c:200:13:MX_CAN1_Init	8	static
+../Core/Src/main.c:237:13:MX_GPIO_Init	48	static
+../Core/Src/main.c:290:13:increment_steps	24	static
+../Core/Src/main.c:303:13:decrement_steps	24	static
+../Core/Src/main.c:316:12:dist_to_steps	24	static
+../Core/Src/main.c:322:13:can_rx_callback	24	static
+../Core/Src/main.c:335:13:proccess_can_data	32	static
+../Core/Src/main.c:361:6:Error_Handler	4	static,ignoring_inline_asm

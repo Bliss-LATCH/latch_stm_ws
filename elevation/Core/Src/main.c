@@ -21,7 +21,7 @@
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
-
+#include "can_device.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -31,6 +31,29 @@
 
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
+// subsystem constants
+#define MIN_HEIGHT 0.5 // TODO needs to be calculated and set based on physical measurements (meters)
+#define MAX_HEIGHT 1.0 // TODO needs to be calculated and set based on physical measurements (meters)
+
+#define CONV_FACTOR 769230.7692
+
+// ---------------- CAN message constants (can be added to form message) ----------------
+// device id bits [8:5]
+#define CAN_DEV_ID 0x100
+
+// priority bits (first two bits of CAN ID)
+#define CAN_PR_CRIT 0x000 // 0b00
+#define CAN_PR_CTRL 0x200 // 0b01
+#define CAN_PR_STAT 0x400 // 0b10
+#define CAN_PR_DBUG 0x600 // 0b11
+
+// message type bits (last five bits)
+#define FILLER_MESSAGE 0x000
+
+// CAN receive filter IDs
+#define CAN_MSG_GLOBAL_STOP 0x000
+#define CAN_MSG_HEARTBEAT 0x001
+#define CAN_MSG_SET_HEIGHT 0x224
 
 /* USER CODE END PD */
 
@@ -40,32 +63,33 @@
 /* USER CODE END PM */
 
 /* Private variables ---------------------------------------------------------*/
+CAN_HandleTypeDef hcan1;
 
 /* USER CODE BEGIN PV */
-
+float current_height = 0; // should be the height of the platform and is respective to both motors
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
 void SystemClock_Config(void);
 static void MX_GPIO_Init(void);
+static void MX_CAN1_Init(void);
 /* USER CODE BEGIN PFP */
-void incrementSteps(int steps);
-void decrementSteps(int steps);
+// CAN function callback plus helpers
+static void can_rx_callback(CANDevice_t *device);
+static void proccess_can_data(uint16_t message_id, uint8_t *data);
+
+
+// stepper control functions
+static void increment_steps(int steps);
+static void decrement_steps(int steps);
+
+// helper functions
+static int dist_to_steps(double height);
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
-void incrementSteps(int steps) {
-	HAL_GPIO_WritePin(GPIOC, STEP_DIR_Pin, GPIO_PIN_RESET); // DIR increamnt
 
-	for(int i = 0; i < steps; ++i) {
-		HAL_GPIO_WritePin(GPIOC, STEP_OUTPUT_Pin, GPIO_PIN_RESET); // send pulse high
-		HAL_Delay(0.200); // 200 ns delay
-		HAL_GPIO_WritePin(GPIOC, STEP_OUTPUT_Pin, GPIO_PIN_SET); // send pulse low
-		HAL_Delay(0.200); // 200 ns delay
-
-	}
-}
 /* USER CODE END 0 */
 
 /**
@@ -97,6 +121,7 @@ int main(void)
 
   /* Initialize all configured peripherals */
   MX_GPIO_Init();
+  MX_CAN1_Init();
   /* USER CODE BEGIN 2 */
 
   /* USER CODE END 2 */
@@ -105,6 +130,7 @@ int main(void)
   /* USER CODE BEGIN WHILE */
   while (1)
   {
+
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
@@ -124,7 +150,7 @@ void SystemClock_Config(void)
   /** Configure the main internal regulator output voltage
   */
   __HAL_RCC_PWR_CLK_ENABLE();
-  __HAL_PWR_VOLTAGESCALING_CONFIG(PWR_REGULATOR_VOLTAGE_SCALE3);
+  __HAL_PWR_VOLTAGESCALING_CONFIG(PWR_REGULATOR_VOLTAGE_SCALE1);
 
   /** Initializes the RCC Oscillators according to the specified parameters
   * in the RCC_OscInitTypeDef structure.
@@ -134,12 +160,19 @@ void SystemClock_Config(void)
   RCC_OscInitStruct.HSICalibrationValue = RCC_HSICALIBRATION_DEFAULT;
   RCC_OscInitStruct.PLL.PLLState = RCC_PLL_ON;
   RCC_OscInitStruct.PLL.PLLSource = RCC_PLLSOURCE_HSI;
-  RCC_OscInitStruct.PLL.PLLM = 16;
-  RCC_OscInitStruct.PLL.PLLN = 336;
-  RCC_OscInitStruct.PLL.PLLP = RCC_PLLP_DIV4;
+  RCC_OscInitStruct.PLL.PLLM = 8;
+  RCC_OscInitStruct.PLL.PLLN = 180;
+  RCC_OscInitStruct.PLL.PLLP = RCC_PLLP_DIV2;
   RCC_OscInitStruct.PLL.PLLQ = 2;
   RCC_OscInitStruct.PLL.PLLR = 2;
   if (HAL_RCC_OscConfig(&RCC_OscInitStruct) != HAL_OK)
+  {
+    Error_Handler();
+  }
+
+  /** Activate the Over-Drive mode
+  */
+  if (HAL_PWREx_EnableOverDrive() != HAL_OK)
   {
     Error_Handler();
   }
@@ -150,13 +183,50 @@ void SystemClock_Config(void)
                               |RCC_CLOCKTYPE_PCLK1|RCC_CLOCKTYPE_PCLK2;
   RCC_ClkInitStruct.SYSCLKSource = RCC_SYSCLKSOURCE_PLLCLK;
   RCC_ClkInitStruct.AHBCLKDivider = RCC_SYSCLK_DIV1;
-  RCC_ClkInitStruct.APB1CLKDivider = RCC_HCLK_DIV2;
-  RCC_ClkInitStruct.APB2CLKDivider = RCC_HCLK_DIV1;
+  RCC_ClkInitStruct.APB1CLKDivider = RCC_HCLK_DIV4;
+  RCC_ClkInitStruct.APB2CLKDivider = RCC_HCLK_DIV2;
 
-  if (HAL_RCC_ClockConfig(&RCC_ClkInitStruct, FLASH_LATENCY_2) != HAL_OK)
+  if (HAL_RCC_ClockConfig(&RCC_ClkInitStruct, FLASH_LATENCY_5) != HAL_OK)
   {
     Error_Handler();
   }
+}
+
+/**
+  * @brief CAN1 Initialization Function
+  * @param None
+  * @retval None
+  */
+static void MX_CAN1_Init(void)
+{
+
+  /* USER CODE BEGIN CAN1_Init 0 */
+
+  /* USER CODE END CAN1_Init 0 */
+
+  /* USER CODE BEGIN CAN1_Init 1 */
+
+  /* USER CODE END CAN1_Init 1 */
+  hcan1.Instance = CAN1;
+  hcan1.Init.Prescaler = 5;
+  hcan1.Init.Mode = CAN_MODE_NORMAL;
+  hcan1.Init.SyncJumpWidth = CAN_SJW_1TQ;
+  hcan1.Init.TimeSeg1 = CAN_BS1_14TQ;
+  hcan1.Init.TimeSeg2 = CAN_BS2_3TQ;
+  hcan1.Init.TimeTriggeredMode = DISABLE;
+  hcan1.Init.AutoBusOff = DISABLE;
+  hcan1.Init.AutoWakeUp = DISABLE;
+  hcan1.Init.AutoRetransmission = DISABLE;
+  hcan1.Init.ReceiveFifoLocked = DISABLE;
+  hcan1.Init.TransmitFifoPriority = DISABLE;
+  if (HAL_CAN_Init(&hcan1) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /* USER CODE BEGIN CAN1_Init 2 */
+
+  /* USER CODE END CAN1_Init 2 */
+
 }
 
 /**
@@ -217,7 +287,71 @@ static void MX_GPIO_Init(void)
 }
 
 /* USER CODE BEGIN 4 */
+static void increment_steps(int steps) {
+	HAL_GPIO_WritePin(GPIOC, STEP_DIR_Pin, GPIO_PIN_RESET); // DIR increamnt
+	HAL_Delay(0.100); // 100 ns delay (hold time)
 
+	for(int i = 0; i < steps; ++i) {
+		HAL_GPIO_WritePin(GPIOC, STEP_OUTPUT_Pin, GPIO_PIN_SET); // send pulse high
+		HAL_Delay(0.200); // 200 ns delay
+		HAL_GPIO_WritePin(GPIOC, STEP_OUTPUT_Pin, GPIO_PIN_RESET); // send pulse low
+		HAL_Delay(0.200); // 200 ns delay
+
+	}
+}
+
+static void decrement_steps(int steps) {
+	HAL_GPIO_WritePin(GPIOC, STEP_DIR_Pin, GPIO_PIN_SET); // DIR increamnt
+	HAL_Delay(0.100); // 100 ns delay (hold time)
+
+	for(int i = 0; i < steps; ++i) {
+		HAL_GPIO_WritePin(GPIOC, STEP_OUTPUT_Pin, GPIO_PIN_SET); // send pulse low
+		HAL_Delay(0.200); // 200 ns delay
+		HAL_GPIO_WritePin(GPIOC, STEP_OUTPUT_Pin, GPIO_PIN_RESET); // send pulse high
+		HAL_Delay(0.200); // 200 ns delay
+
+	}
+}
+
+static int dist_to_steps(double height){
+	int steps = CONV_FACTOR * height;
+	return abs(steps);
+}
+
+// callback for receiving CAN data
+static void can_rx_callback(CANDevice_t *device) {
+	if (device->msgReceived) {
+		// Only pull data if we actually have a new message
+		uint8_t *rx_data = device->rxBuffer;
+		uint16_t message_id = device->rxHeader.StdId;
+
+		proccess_can_data(message_id, rx_data);
+
+		device->msgReceived = false;
+	}
+}
+
+// proccess the can data based on the message ID (little endian data protocol)
+static void proccess_can_data(uint16_t message_id, uint8_t *data) {
+    float received_val;
+
+    // Copy the 4 bytes back into a float variable
+    memcpy(&received_val, data, sizeof(float));
+
+    if (received_val < MAX_HEIGHT && received_val > MIN_HEIGHT) {
+		switch (message_id) {
+			case CAN_MSG_SET_HEIGHT:
+				float height_diff = received_val - current_height;
+				int steps = dist_to_steps(height_diff);
+				if (height_diff > 0) {
+					increment_steps(steps);
+				} else {
+					decrement_steps(steps);
+				}
+				break;
+		}
+    }
+}
 /* USER CODE END 4 */
 
 /**
