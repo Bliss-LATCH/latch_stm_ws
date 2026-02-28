@@ -45,7 +45,7 @@ CAN_HandleTypeDef hcan1;
 /* USER CODE BEGIN PV */
 CANDevice_t canDV;
 uint16_t rxIdList[ID_LIST_LEN] = {0x000, 0x110, 0x120};
-uint32_t txID = 0x000;
+uint32_t txID = 0x4c0;
 uint8_t txData[8] = {0x12, 0x0f, 0x23, 0x33, 0x23};
 uint8_t txLen = 5;
 /* USER CODE END PV */

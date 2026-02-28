@@ -32,8 +32,8 @@
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
 // subsystem constants
-#define MIN_HEIGHT 0.5 // TODO needs to be calculated and set based on physical measurements (meters)
-#define MAX_HEIGHT 1.0 // TODO needs to be calculated and set based on physical measurements (meters)
+#define MIN_HEIGHT 0 // TODO needs to be calculated and set based on physical measurements (meters)
+#define MAX_HEIGHT 3.0 // TODO needs to be calculated and set based on physical measurements (meters)
 
 #define CONV_FACTOR 769230.7692
 
@@ -55,6 +55,8 @@
 #define CAN_MSG_HEARTBEAT 0x001
 #define CAN_MSG_SET_HEIGHT 0x224
 
+#define FILTER_LIST_LEN 3
+
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
@@ -66,7 +68,14 @@
 CAN_HandleTypeDef hcan1;
 
 /* USER CODE BEGIN PV */
-float current_height = 0; // should be the height of the platform and is respective to both motors
+CANDevice_t can_dev;
+uint16_t rx_id_list[] = {CAN_MSG_GLOBAL_STOP, CAN_MSG_HEARTBEAT, CAN_MSG_SET_HEIGHT};
+
+
+float current_height = MIN_HEIGHT; // should be the height of the platform and is respective to both motors
+
+uint8_t update_height_flag = 0;
+float target_height = 0.0;
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -78,13 +87,17 @@ static void MX_CAN1_Init(void);
 static void can_rx_callback(CANDevice_t *device);
 static void proccess_can_data(uint16_t message_id, uint8_t *data);
 
-
 // stepper control functions
 static void increment_steps(int steps);
 static void decrement_steps(int steps);
 
+// limit switch functions
+static int get_bottom_limit();
+static int get_top_limit();
+
 // helper functions
 static int dist_to_steps(double height);
+static float steps_to_dist(int steps);
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
@@ -123,13 +136,36 @@ int main(void)
   MX_GPIO_Init();
   MX_CAN1_Init();
   /* USER CODE BEGIN 2 */
+  // start CAN device
+  device_can_init(&can_dev, &hcan1);
 
+  // config the CAN device filter banks
+  can_config_filter(&can_dev, rx_id_list, FILTER_LIST_LEN);
+
+  // link the can rx callback
+  link_rx_callback(&can_dev, can_rx_callback);
   /* USER CODE END 2 */
 
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
   while (1)
   {
+	  if(get_bottom_limit()) current_height = MIN_HEIGHT;
+	  if(get_top_limit()) current_height = MAX_HEIGHT;
+
+	  if(update_height_flag) {
+		  update_height_flag = 0;
+
+		  float height_diff = target_height - current_height;
+		  int steps = dist_to_steps(height_diff);
+
+		  if (height_diff > 0) {
+			  increment_steps(steps);
+		  } else if (height_diff < 0) {
+			  decrement_steps(steps);
+		  }
+	  }
+	  continue;
 
     /* USER CODE END WHILE */
 
@@ -274,6 +310,12 @@ static void MX_GPIO_Init(void)
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
   HAL_GPIO_Init(GPIOC, &GPIO_InitStruct);
 
+  /*Configure GPIO pins : BOTTOM_LIMIT_Pin TOP_LIMIT_Pin */
+  GPIO_InitStruct.Pin = BOTTOM_LIMIT_Pin|TOP_LIMIT_Pin;
+  GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
+  GPIO_InitStruct.Pull = GPIO_PULLUP;
+  HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
+
   /* USER CODE BEGIN MX_GPIO_Init_2 */
 
   /* USER CODE END MX_GPIO_Init_2 */
@@ -282,33 +324,56 @@ static void MX_GPIO_Init(void)
 /* USER CODE BEGIN 4 */
 static void increment_steps(int steps) {
 	HAL_GPIO_WritePin(GPIOC, STEP_DIR_Pin, GPIO_PIN_RESET); // DIR increamnt
-	HAL_Delay(0.100); // 100 ns delay (hold time)
+	HAL_Delay(0.0001); // 100 ns delay (hold time)
 
 	for(int i = 0; i < steps; ++i) {
+		if(get_top_limit()) break;
+
 		HAL_GPIO_WritePin(GPIOC, STEP_OUTPUT_Pin, GPIO_PIN_SET); // send pulse high
-		HAL_Delay(0.200); // 200 ns delay
+		HAL_Delay(0.0002); // 200 ns delay
 		HAL_GPIO_WritePin(GPIOC, STEP_OUTPUT_Pin, GPIO_PIN_RESET); // send pulse low
-		HAL_Delay(0.200); // 200 ns delay
+		HAL_Delay(0.0002); // 200 ns delaya
+
+		// increment our current height
+		current_height += steps_to_dist(1);
 
 	}
 }
 
 static void decrement_steps(int steps) {
 	HAL_GPIO_WritePin(GPIOC, STEP_DIR_Pin, GPIO_PIN_SET); // DIR increamnt
-	HAL_Delay(0.100); // 100 ns delay (hold time)
+	HAL_Delay(0.0001); // 100 ns delay (hold time)
 
 	for(int i = 0; i < steps; ++i) {
+		if(get_bottom_limit()) break;
+
 		HAL_GPIO_WritePin(GPIOC, STEP_OUTPUT_Pin, GPIO_PIN_SET); // send pulse low
-		HAL_Delay(0.200); // 200 ns delay
+		HAL_Delay(0.0001); // 200 ns delay
 		HAL_GPIO_WritePin(GPIOC, STEP_OUTPUT_Pin, GPIO_PIN_RESET); // send pulse high
-		HAL_Delay(0.200); // 200 ns delay
+		HAL_Delay(0.0001); // 200 ns delay
+
+		// decrement our current height
+		current_height -= steps_to_dist(1);
 
 	}
+}
+
+static int get_bottom_limit() {
+	return HAL_GPIO_ReadPin(GPIOA, BOTTOM_LIMIT_Pin);
+}
+
+static int get_top_limit() {
+	return HAL_GPIO_ReadPin(GPIOA, TOP_LIMIT_Pin);
 }
 
 static int dist_to_steps(double height){
 	int steps = CONV_FACTOR * height;
 	return abs(steps);
+}
+
+static float steps_to_dist(int steps) {
+	float dist = (1 / CONV_FACTOR) * steps;
+	return dist;
 }
 
 // callback for receiving CAN data
@@ -334,13 +399,8 @@ static void proccess_can_data(uint16_t message_id, uint8_t *data) {
     if (received_val < MAX_HEIGHT && received_val > MIN_HEIGHT) {
 		switch (message_id) {
 			case CAN_MSG_SET_HEIGHT:
-				float height_diff = received_val - current_height;
-				int steps = dist_to_steps(height_diff);
-				if (height_diff > 0) {
-					increment_steps(steps);
-				} else {
-					decrement_steps(steps);
-				}
+				target_height = received_val;
+				update_height_flag = 1;
 				break;
 		}
     }

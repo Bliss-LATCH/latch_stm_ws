@@ -69,6 +69,10 @@ void Error_Handler(void);
 #define STEP_OUTPUT_GPIO_Port GPIOC
 #define STEP_DIR_Pin GPIO_PIN_7
 #define STEP_DIR_GPIO_Port GPIOC
+#define BOTTOM_LIMIT_Pin GPIO_PIN_8
+#define BOTTOM_LIMIT_GPIO_Port GPIOA
+#define TOP_LIMIT_Pin GPIO_PIN_9
+#define TOP_LIMIT_GPIO_Port GPIOA
 #define TMS_Pin GPIO_PIN_13
 #define TMS_GPIO_Port GPIOA
 #define TCK_Pin GPIO_PIN_14
