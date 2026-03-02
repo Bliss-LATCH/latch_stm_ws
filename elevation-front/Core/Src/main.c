@@ -22,6 +22,7 @@
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
 #include "can_device.h"
+#include "math.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -36,6 +37,9 @@
 #define MAX_HEIGHT 3.0 // TODO needs to be calculated and set based on physical measurements (meters)
 
 #define CONV_FACTOR 769230.7692
+
+#define MOTOR_DIR_UP 0
+#define MOTOR_DIR_DOWN 1
 
 // ---------------- CAN message constants (can be added to form message) ----------------
 // device id bits [8:5]
@@ -67,29 +71,38 @@
 /* Private variables ---------------------------------------------------------*/
 CAN_HandleTypeDef hcan1;
 
+TIM_HandleTypeDef htim2;
+
 /* USER CODE BEGIN PV */
 CANDevice_t can_dev;
 uint16_t rx_id_list[] = {CAN_MSG_GLOBAL_STOP, CAN_MSG_HEARTBEAT, CAN_MSG_SET_HEIGHT};
 
+float current_height = 1.5; // should be the height of the platform and is respective to both motors
 
-float current_height = MIN_HEIGHT; // should be the height of the platform and is respective to both motors
-
+// stepping vars
+uint32_t steps_remaining = 0;
+uint8_t motor_moving = 0;
 uint8_t update_height_flag = 0;
 float target_height = 0.0;
+uint16_t motor_delay_us = 200; // delay between pulses using pwm counter, in micro seconds
+
+// set the incremental height count
+float height_inc = 1 / CONV_FACTOR;
+
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
 void SystemClock_Config(void);
 static void MX_GPIO_Init(void);
 static void MX_CAN1_Init(void);
+static void MX_TIM2_Init(void);
 /* USER CODE BEGIN PFP */
 // CAN function callback plus helpers
 static void can_rx_callback(CANDevice_t *device);
 static void proccess_can_data(uint16_t message_id, uint8_t *data);
 
 // stepper control functions
-static void increment_steps(int steps);
-static void decrement_steps(int steps);
+static void start_motor_movement(uint32_t steps, uint8_t direction, uint16_t delay_us_seconds); // direction: 0 is up and 1 is down
 
 // limit switch functions
 static int get_bottom_limit();
@@ -135,6 +148,7 @@ int main(void)
   /* Initialize all configured peripherals */
   MX_GPIO_Init();
   MX_CAN1_Init();
+  MX_TIM2_Init();
   /* USER CODE BEGIN 2 */
   // start CAN device
   device_can_init(&can_dev, &hcan1);
@@ -160,12 +174,11 @@ int main(void)
 		  int steps = dist_to_steps(height_diff);
 
 		  if (height_diff > 0) {
-			  increment_steps(steps);
+			  start_motor_movement(steps, MOTOR_DIR_UP, motor_delay_us);
 		  } else if (height_diff < 0) {
-			  decrement_steps(steps);
+			  start_motor_movement(steps, MOTOR_DIR_DOWN, motor_delay_us);
 		  }
 	  }
-	  continue;
 
     /* USER CODE END WHILE */
 
@@ -259,6 +272,55 @@ static void MX_CAN1_Init(void)
 }
 
 /**
+  * @brief TIM2 Initialization Function
+  * @param None
+  * @retval None
+  */
+static void MX_TIM2_Init(void)
+{
+
+  /* USER CODE BEGIN TIM2_Init 0 */
+
+  /* USER CODE END TIM2_Init 0 */
+
+  TIM_MasterConfigTypeDef sMasterConfig = {0};
+  TIM_OC_InitTypeDef sConfigOC = {0};
+
+  /* USER CODE BEGIN TIM2_Init 1 */
+
+  /* USER CODE END TIM2_Init 1 */
+  htim2.Instance = TIM2;
+  htim2.Init.Prescaler = 47;
+  htim2.Init.CounterMode = TIM_COUNTERMODE_UP;
+  htim2.Init.Period = 4294967295;
+  htim2.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
+  htim2.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_DISABLE;
+  if (HAL_TIM_PWM_Init(&htim2) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  sMasterConfig.MasterOutputTrigger = TIM_TRGO_RESET;
+  sMasterConfig.MasterSlaveMode = TIM_MASTERSLAVEMODE_DISABLE;
+  if (HAL_TIMEx_MasterConfigSynchronization(&htim2, &sMasterConfig) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  sConfigOC.OCMode = TIM_OCMODE_PWM1;
+  sConfigOC.Pulse = 0;
+  sConfigOC.OCPolarity = TIM_OCPOLARITY_HIGH;
+  sConfigOC.OCFastMode = TIM_OCFAST_DISABLE;
+  if (HAL_TIM_PWM_ConfigChannel(&htim2, &sConfigOC, TIM_CHANNEL_1) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /* USER CODE BEGIN TIM2_Init 2 */
+
+  /* USER CODE END TIM2_Init 2 */
+  HAL_TIM_MspPostInit(&htim2);
+
+}
+
+/**
   * @brief GPIO Initialization Function
   * @param None
   * @retval None
@@ -280,7 +342,7 @@ static void MX_GPIO_Init(void)
   HAL_GPIO_WritePin(LD2_GPIO_Port, LD2_Pin, GPIO_PIN_RESET);
 
   /*Configure GPIO pin Output Level */
-  HAL_GPIO_WritePin(GPIOC, STEP_OUTPUT_Pin|STEP_DIR_Pin, GPIO_PIN_SET);
+  HAL_GPIO_WritePin(STEP_DIR_GPIO_Port, STEP_DIR_Pin, GPIO_PIN_SET);
 
   /*Configure GPIO pin : B1_Pin */
   GPIO_InitStruct.Pin = B1_Pin;
@@ -303,12 +365,12 @@ static void MX_GPIO_Init(void)
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
   HAL_GPIO_Init(LD2_GPIO_Port, &GPIO_InitStruct);
 
-  /*Configure GPIO pins : STEP_OUTPUT_Pin STEP_DIR_Pin */
-  GPIO_InitStruct.Pin = STEP_OUTPUT_Pin|STEP_DIR_Pin;
+  /*Configure GPIO pin : STEP_DIR_Pin */
+  GPIO_InitStruct.Pin = STEP_DIR_Pin;
   GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
   GPIO_InitStruct.Pull = GPIO_PULLDOWN;
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
-  HAL_GPIO_Init(GPIOC, &GPIO_InitStruct);
+  HAL_GPIO_Init(STEP_DIR_GPIO_Port, &GPIO_InitStruct);
 
   /*Configure GPIO pins : BOTTOM_LIMIT_Pin TOP_LIMIT_Pin */
   GPIO_InitStruct.Pin = BOTTOM_LIMIT_Pin|TOP_LIMIT_Pin;
@@ -322,40 +384,29 @@ static void MX_GPIO_Init(void)
 }
 
 /* USER CODE BEGIN 4 */
-static void increment_steps(int steps) {
-	HAL_GPIO_WritePin(GPIOC, STEP_DIR_Pin, GPIO_PIN_RESET); // DIR increamnt
-	HAL_Delay(0.0001); // 100 ns delay (hold time)
+static void start_motor_movement(uint32_t steps, uint8_t direction, uint16_t delay_us_seconds) {
+	if(steps <= 0 || motor_moving) return; // TODO might want to remove later based on logic
 
-	for(int i = 0; i < steps; ++i) {
-		if(get_top_limit()) break;
+	// set direction
+	HAL_GPIO_WritePin(GPIOC, STEP_DIR_Pin, direction);
 
-		HAL_GPIO_WritePin(GPIOC, STEP_OUTPUT_Pin, GPIO_PIN_SET); // send pulse high
-		HAL_Delay(0.0002); // 200 ns delay
-		HAL_GPIO_WritePin(GPIOC, STEP_OUTPUT_Pin, GPIO_PIN_RESET); // send pulse low
-		HAL_Delay(0.0002); // 200 ns delaya
+	__HAL_TIM_SET_COUNTER(&htim2, 0);
 
-		// increment our current height
-		current_height += steps_to_dist(1);
+	__HAL_TIM_CLEAR_IT(&htim2, TIM_IT_CC1);
 
-	}
-}
+	// setting the compare ARR to make delay using pwm counter
+	__HAL_TIM_SET_AUTORELOAD(&htim2, delay_us_seconds);
+	__HAL_TIM_SET_COMPARE(&htim2, TIM_CHANNEL_1, 1);
 
-static void decrement_steps(int steps) {
-	HAL_GPIO_WritePin(GPIOC, STEP_DIR_Pin, GPIO_PIN_SET); // DIR increamnt
-	HAL_Delay(0.0001); // 100 ns delay (hold time)
+	// set control vars
+	steps_remaining = steps;
+	motor_moving = 1;
+	if (direction == MOTOR_DIR_UP) 	height_inc = fabs(height_inc);
+	if(direction == MOTOR_DIR_DOWN) height_inc = -fabs(height_inc);
 
-	for(int i = 0; i < steps; ++i) {
-		if(get_bottom_limit()) break;
+	// start the pulse gen
+	HAL_TIM_PWM_Start_IT(&htim2, TIM_CHANNEL_1);
 
-		HAL_GPIO_WritePin(GPIOC, STEP_OUTPUT_Pin, GPIO_PIN_SET); // send pulse low
-		HAL_Delay(0.0001); // 200 ns delay
-		HAL_GPIO_WritePin(GPIOC, STEP_OUTPUT_Pin, GPIO_PIN_RESET); // send pulse high
-		HAL_Delay(0.0001); // 200 ns delay
-
-		// decrement our current height
-		current_height -= steps_to_dist(1);
-
-	}
 }
 
 static int get_bottom_limit() {
@@ -405,6 +456,26 @@ static void proccess_can_data(uint16_t message_id, uint8_t *data) {
 		}
     }
 }
+
+// interrupt overrides
+void HAL_TIM_PWM_PulseFinishedCallback(TIM_HandleTypeDef *htim) {
+	if(htim->Instance == TIM2) {
+		if (get_top_limit() || get_bottom_limit()) {
+			steps_remaining = 0;
+		}
+
+		if (steps_remaining > 0) {
+			steps_remaining--;
+			current_height += height_inc;
+		}
+
+		if(steps_remaining == 0) {
+			HAL_TIM_PWM_Stop_IT(&htim2, TIM_CHANNEL_1);
+			motor_moving = 0;
+		}
+	}
+}
+
 /* USER CODE END 4 */
 
 /**
