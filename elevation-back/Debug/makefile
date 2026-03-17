@@ -35,34 +35,34 @@ $(wildcard ../makefile.init) \
 $(wildcard ../makefile.targets) \
 
 
-BUILD_ARTIFACT_NAME := elevation
+BUILD_ARTIFACT_NAME := elevation-back
 BUILD_ARTIFACT_EXTENSION := elf
 BUILD_ARTIFACT_PREFIX :=
 BUILD_ARTIFACT := $(BUILD_ARTIFACT_PREFIX)$(BUILD_ARTIFACT_NAME)$(if $(BUILD_ARTIFACT_EXTENSION),.$(BUILD_ARTIFACT_EXTENSION),)
 
 # Add inputs and outputs from these tool invocations to the build variables 
 EXECUTABLES += \
-elevation.elf \
+elevation-back.elf \
 
 MAP_FILES += \
-elevation.map \
+elevation-back.map \
 
 SIZE_OUTPUT += \
 default.size.stdout \
 
 OBJDUMP_LIST += \
-elevation.list \
+elevation-back.list \
 
 
 # All Target
 all: main-build
 
 # Main-build Target
-main-build: elevation.elf secondary-outputs
+main-build: elevation-back.elf secondary-outputs
 
 # Tool invocations
-elevation.elf elevation.map: $(OBJS) $(USER_OBJS) /home/nick/dev/LATCH/latch_stm_ws/elevation/STM32F446RETX_FLASH.ld makefile objects.list $(OPTIONAL_TOOL_DEPS)
-	arm-none-eabi-gcc -o "elevation.elf" @"objects.list" $(USER_OBJS) $(LIBS) -mcpu=cortex-m4 -T"/home/nick/dev/LATCH/latch_stm_ws/elevation/STM32F446RETX_FLASH.ld" --specs=nosys.specs -Wl,-Map="elevation.map" -Wl,--gc-sections -static --specs=nano.specs -mfpu=fpv4-sp-d16 -mfloat-abi=hard -mthumb -Wl,--start-group -lc -lm -Wl,--end-group
+elevation-back.elf elevation-back.map: $(OBJS) $(USER_OBJS) /home/nick/dev/LATCH/latch_stm_ws/elevation-back/STM32F446RETX_FLASH.ld makefile objects.list $(OPTIONAL_TOOL_DEPS)
+	arm-none-eabi-gcc -o "elevation-back.elf" @"objects.list" $(USER_OBJS) $(LIBS) -mcpu=cortex-m4 -T"/home/nick/dev/LATCH/latch_stm_ws/elevation-back/STM32F446RETX_FLASH.ld" --specs=nosys.specs -Wl,-Map="elevation-back.map" -Wl,--gc-sections -static --specs=nano.specs -mfpu=fpv4-sp-d16 -mfloat-abi=hard -mthumb -Wl,--start-group -lc -lm -Wl,--end-group
 	@echo 'Finished building target: $@'
 	@echo ' '
 
@@ -71,14 +71,14 @@ default.size.stdout: $(EXECUTABLES) makefile objects.list $(OPTIONAL_TOOL_DEPS)
 	@echo 'Finished building: $@'
 	@echo ' '
 
-elevation.list: $(EXECUTABLES) makefile objects.list $(OPTIONAL_TOOL_DEPS)
-	arm-none-eabi-objdump -h -S $(EXECUTABLES) > "elevation.list"
+elevation-back.list: $(EXECUTABLES) makefile objects.list $(OPTIONAL_TOOL_DEPS)
+	arm-none-eabi-objdump -h -S $(EXECUTABLES) > "elevation-back.list"
 	@echo 'Finished building: $@'
 	@echo ' '
 
 # Other Targets
 clean:
-	-$(RM) default.size.stdout elevation.elf elevation.list elevation.map
+	-$(RM) default.size.stdout elevation-back.elf elevation-back.list elevation-back.map
 	-@echo ' '
 
 secondary-outputs: $(SIZE_OUTPUT) $(OBJDUMP_LIST)
