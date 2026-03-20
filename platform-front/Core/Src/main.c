@@ -136,14 +136,14 @@ int main(void)
   MX_TIM1_Init();
   MX_TIM8_Init();
   /* USER CODE BEGIN 2 */
-  // start CAN device
-  device_can_init(&can_dev, &hcan1);
-
-  // config the CAN device filter banks
-  can_config_filter(&can_dev, rx_id_list, FILTER_LIST_LEN);
-
-  // link the can rx callback
-  link_rx_callback(&can_dev, can_rx_callback);
+//  // start CAN device
+//  device_can_init(&can_dev, &hcan1);
+//
+//  // config the CAN device filter banks
+//  can_config_filter(&can_dev, rx_id_list, FILTER_LIST_LEN);
+//
+//  // link the can rx callback
+//  link_rx_callback(&can_dev, can_rx_callback);
 
   // start the servo PWMs
   HAL_TIM_PWM_Start(&htim1, TIM_CHANNEL_1);
@@ -155,7 +155,12 @@ int main(void)
   /* USER CODE BEGIN WHILE */
   while (1)
   {
-
+	  set_horizontal_angle(45);
+	  HAL_Delay(1000);
+	  set_horizontal_angle(90);
+	  HAL_Delay(1000);
+	  set_horizontal_angle(135);
+	  HAL_Delay(1000);
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
