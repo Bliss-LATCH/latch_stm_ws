@@ -26,6 +26,11 @@
 
 /* Private typedef -----------------------------------------------------------*/
 /* USER CODE BEGIN PTD */
+typedef struct {
+    float x;      // X position in meters
+    float y;      // Y position in meters
+    float theta;  // Heading in radians
+} Odometry_t;
 
 /* USER CODE END PTD */
 
@@ -37,6 +42,25 @@
 
 #define MOTOR_FWR 0
 #define MOTOR_BCK 1
+
+#define TICKS_PER_REV 966
+
+// Tank Tread Physical Constants
+#define SPROCKET_RADIUS 0.05f      // Radius of drive sprocket + track thickness (meters)
+#define PHYSICAL_TRACK_WIDTH 0.25f // Physical distance between the center of the two treads (meters)
+#define SKID_MULTIPLIER 1.35f      // TUNE THIS: Resistance to turning (usually 1.2 to 1.6)
+#define EFFECTIVE_TRACK_WIDTH (PHYSICAL_TRACK_WIDTH * SKID_MULTIPLIER)
+
+// Velocity Limits
+#define MAX_MOTOR_M_S 1.5f         // Max linear speed of the tread in m/s at 100% power
+
+// PID Constants (TUNE THESE for m/s error values)
+#define VEL_KP 1.75f
+#define VEL_KI 0.3f
+#define VEL_KD 0.05f
+#define MAX_INTEGRAL 0.5f
+
+#define PI 3.14159265358979f
 
 // ---------------- CAN message constants (can be added to form message) ----------------
 // device id bits [8:5]
@@ -76,7 +100,12 @@ TIM_HandleTypeDef htim8;
 /* USER CODE BEGIN PV */
 CANDevice_t can_dev;
 uint16_t rx_id_list[] = {CAN_MSG_GLOBAL_STOP, CAN_MSG_HEARTBEAT, CAN_MSG_LEFT_VEL, CAN_MSG_RIGHT_VEL};
+Odometry_t robot_odom = {0.0f, 0.0f, 0.0f};
 
+static float vel_right = 0;
+static float rpm_right = 0;
+static float vel_left = 0;
+static float rpm_left = 0;
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -96,12 +125,19 @@ static void proccess_can_data(uint16_t message_id, uint8_t *data);
 static void set_left_pwr(float pwr);
 static void set_right_pwr(float pwr);
 
-static void get_left_vel();
-static void get_right_vel();
+static float get_left_vel();
+static float get_right_vel();
+
+static void set_left_vel(float target_m_s);
+static void set_right_vel(float target_m_s);
 
 // encoder helper functions
-static int16_t 	get_right_motor_rpm(); // directional
-static int16_t 	get_left_motor_rpm(); // directional
+static int16_t 	get_right_rpm(); // directional
+static int16_t 	get_left_rpm(); // directional
+
+static void set_chassis_vel(float linear_v, float angular_w);
+static void update_odometry();
+
 
 // helper functions
 double clamp(double value, double min, double max) {
@@ -150,14 +186,14 @@ int main(void)
   MX_CAN1_Init();
   MX_TIM4_Init();
   /* USER CODE BEGIN 2 */
-  // start CAN device
-  device_can_init(&can_dev, &hcan1);
-
-  // config the CAN device filter banks
-  can_config_filter(&can_dev, rx_id_list, FILTER_LIST_LEN);
-
-  // link the can rx callback
-  link_rx_callback(&can_dev, can_rx_callback);
+//  // start CAN device
+//  device_can_init(&can_dev, &hcan1);
+//
+//  // config the CAN device filter banks
+//  can_config_filter(&can_dev, rx_id_list, FILTER_LIST_LEN);
+//
+//  // link the can rx callback
+//  link_rx_callback(&can_dev, can_rx_callback);
 
   // Start the encoder timers
   HAL_TIM_Encoder_Start(&htim3, TIM_CHANNEL_ALL);
@@ -167,12 +203,27 @@ int main(void)
   HAL_TIM_PWM_Start(&htim2, TIM_CHANNEL_1);
   HAL_TIM_PWM_Start(&htim8, TIM_CHANNEL_1);
 
+  set_right_pwr(0);
+  set_left_pwr(0);
+
+  HAL_Delay(100); // delay for resetting the motor driver using the set powers above
+
   /* USER CODE END 2 */
 
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
   while (1)
   {
+	  rpm_right = get_right_rpm();
+	  vel_right = get_right_vel();
+
+	  rpm_left = get_left_rpm();
+	  vel_left = get_left_vel();
+
+	  set_chassis_vel(0.10, 0);
+	  update_odometry();
+
+	  HAL_Delay(50);
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
@@ -287,7 +338,7 @@ static void MX_TIM2_Init(void)
   htim2.Init.CounterMode = TIM_COUNTERMODE_UP;
   htim2.Init.Period = 2399;
   htim2.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
-  htim2.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_DISABLE;
+  htim2.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_ENABLE;
   if (HAL_TIM_PWM_Init(&htim2) != HAL_OK)
   {
     Error_Handler();
@@ -436,7 +487,7 @@ static void MX_TIM8_Init(void)
   htim8.Init.Period = 2399;
   htim8.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
   htim8.Init.RepetitionCounter = 0;
-  htim8.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_DISABLE;
+  htim8.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_ENABLE;
   if (HAL_TIM_PWM_Init(&htim8) != HAL_OK)
   {
     Error_Handler();
@@ -557,7 +608,7 @@ static void proccess_can_data(uint16_t message_id, uint8_t *data) {
     }
 }
 
-static int16_t 	get_left_motor_rpm() {
+static int16_t 	get_left_rpm() {
 	static uint16_t previous_count = 0;
 	static uint32_t previous_time = 0;
 	static int16_t last_rpm = 0;
@@ -574,13 +625,13 @@ static int16_t 	get_left_motor_rpm() {
 	previous_time = current_time;
 
 	// Math: (ticks / dt_in_ms) * (1000ms / 1sec) * (60sec / 1min) / 2160 CPR
-	float rpm = ((float)velocity_ticks / (float)dt) * 1000.0f * 60.0f / 2160.0f;
+	float rpm = ((float)velocity_ticks / (float)dt) * 1000.0f * 60.0f / TICKS_PER_REV;
 
 	last_rpm = (int16_t)rpm;
 	return last_rpm;
 }
 
-static int16_t 	get_right_motor_rpm() {
+static int16_t 	get_right_rpm() {
 	static uint16_t previous_count = 0;
 		static uint32_t previous_time = 0;
 		static int16_t last_rpm = 0;
@@ -597,7 +648,7 @@ static int16_t 	get_right_motor_rpm() {
 		previous_time = current_time;
 
 		// Math: (ticks / dt_in_ms) * (1000ms / 1sec) * (60sec / 1min) / 2160 CPR
-		float rpm = ((float)velocity_ticks / (float)dt) * 1000.0f * 60.0f / 2160.0f;
+		float rpm = ((float)velocity_ticks / (float)dt) * 1000.0f * 60.0f / TICKS_PER_REV;
 
 		last_rpm = (int16_t)rpm;
 		return last_rpm;
@@ -614,16 +665,129 @@ static void set_left_pwr(float pwr) {
 
 static void set_right_pwr(float pwr) {
 	float clamped_pwr = clamp(pwr, -1, 1);
-	if (clamped_pwr < 0) HAL_GPIO_WritePin(GPIOA, DIR_LEFT_Pin, MOTOR_BCK);
-	if (clamped_pwr >= 0) HAL_GPIO_WritePin(GPIOA, DIR_LEFT_Pin, MOTOR_FWR);
+	if (clamped_pwr < 0) HAL_GPIO_WritePin(GPIOA, DIR_RIGHT_Pin, MOTOR_BCK);
+	if (clamped_pwr >= 0) HAL_GPIO_WritePin(GPIOA, DIR_RIGHT_Pin, MOTOR_FWR);
 
 	uint32_t pwm_val = (uint32_t)(fabs(clamped_pwr) * ARR_MAX);
 	__HAL_TIM_SET_COMPARE(&htim8, TIM_CHANNEL_1, pwm_val);
 }
 
-static void get_left_vel(); // TODO
-static void get_right_vel(); // TODO
+static float get_left_vel() {
+    int16_t rpm = get_left_rpm();
+    // Convert RPM to linear velocity (m/s)
+    // Formula: (RPM / 60) * (2 * PI * Radius)
+    return ((float)rpm / 60.0f) * (2.0f * PI * SPROCKET_RADIUS);
+}
 
+static float get_right_vel() {
+    int16_t rpm = get_right_rpm();
+    return ((float)rpm / 60.0f) * (2.0f * PI * SPROCKET_RADIUS);
+}
+
+static void set_left_vel(float target_m_s) {
+    static float integral = 0.0f;
+    static float prev_error = 0.0f;
+    static uint32_t prev_time = 0;
+
+    // Calculate time delta (dt)
+    uint32_t current_time = HAL_GetTick();
+    float dt = (float)(current_time - prev_time) / 1000.0f;
+
+    // Prevent division by zero and handle first loop iteration
+    if (dt <= 0.0f) dt = 0.001f;
+    prev_time = current_time;
+
+    float current_vel = get_left_vel();
+    float error = target_m_s - current_vel;
+
+    // True integration over time
+    integral += (error * dt);
+    integral = clamp(integral, -MAX_INTEGRAL, MAX_INTEGRAL);
+
+    // True derivative over time
+    float derivative = (error - prev_error) / dt;
+    prev_error = error;
+
+    // Calculate final output
+    float feed_forward = target_m_s / MAX_MOTOR_M_S;
+    float output_pwr = feed_forward + (VEL_KP * error) + (VEL_KI * integral) + (VEL_KD * derivative);
+
+    set_left_pwr(output_pwr);
+}
+
+static void set_right_vel(float target_m_s) {
+    static float integral = 0.0f;
+    static float prev_error = 0.0f;
+    static uint32_t prev_time = 0;
+
+    // Calculate time delta (dt)
+    uint32_t current_time = HAL_GetTick();
+    float dt = (float)(current_time - prev_time) / 1000.0f;
+
+    // Prevent division by zero and handle first loop iteration
+    if (dt <= 0.0f) dt = 0.001f;
+    prev_time = current_time;
+
+    float current_vel = get_right_vel();
+    float error = target_m_s - current_vel;
+
+    // True integration over time
+    integral += (error * dt);
+    integral = clamp(integral, -MAX_INTEGRAL, MAX_INTEGRAL);
+
+    // True derivative over time
+    float derivative = (error - prev_error) / dt;
+    prev_error = error;
+
+    // Calculate final output
+    float feed_forward = target_m_s / MAX_MOTOR_M_S;
+    float output_pwr = feed_forward + (VEL_KP * error) + (VEL_KI * integral) + (VEL_KD * derivative);
+
+    set_right_pwr(output_pwr);
+}
+
+/**
+ * @brief Sets the velocity of the entire tank chassis.
+ * @param linear_v Target forward velocity in m/s
+ * @param angular_w Target rotational velocity in rad/s (positive = turning left)
+ */
+static void set_chassis_vel(float linear_v, float angular_w) {
+    // Calculate required linear velocity for each tread (m/s)
+    // v = v_center +/- (omega * effective_width / 2)
+    float target_v_right = linear_v + (angular_w * EFFECTIVE_TRACK_WIDTH / 2.0f);
+    float target_v_left  = linear_v - (angular_w * EFFECTIVE_TRACK_WIDTH / 2.0f);
+
+    // Apply directly to motor controllers (no rad/s conversion needed!)
+    set_right_vel(target_v_right);
+    set_left_vel(target_v_left);
+}
+
+static void update_odometry() {
+    static uint32_t previous_time = 0;
+    uint32_t current_time = HAL_GetTick();
+
+    // Calculate delta time in seconds
+    float dt = (float)(current_time - previous_time) / 1000.0f;
+    if (dt <= 0.0f) return;
+    previous_time = current_time;
+
+    // Get current linear velocities directly in m/s
+    float v_left = get_left_vel();
+    float v_right = get_right_vel();
+
+    // Calculate chassis center velocities
+    float linear_v = (v_right + v_left) / 2.0f;
+    float angular_w = (v_right - v_left) / EFFECTIVE_TRACK_WIDTH;
+
+    // Integrate to find position on the field
+    robot_odom.x += linear_v * cosf(robot_odom.theta) * dt;
+    robot_odom.y += linear_v * sinf(robot_odom.theta) * dt;
+    robot_odom.theta += angular_w * dt;
+
+    // Wrap heading between -PI and PI
+    while (robot_odom.theta > PI)  robot_odom.theta -= 2.0f * PI;
+    while (robot_odom.theta <= -PI) robot_odom.theta += 2.0f * PI;
+}
 /* USER CODE END 4 */
 
 /**

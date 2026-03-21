@@ -69,10 +69,10 @@ void Error_Handler(void);
 #define USART_RX_GPIO_Port GPIOA
 #define LD2_Pin GPIO_PIN_5
 #define LD2_GPIO_Port GPIOA
-#define LEFT_ENC_A_Pin GPIO_PIN_6
-#define LEFT_ENC_A_GPIO_Port GPIOA
-#define LEFT_ENC_B_Pin GPIO_PIN_7
+#define LEFT_ENC_B_Pin GPIO_PIN_6
 #define LEFT_ENC_B_GPIO_Port GPIOA
+#define LEFT_ENC_A_Pin GPIO_PIN_7
+#define LEFT_ENC_A_GPIO_Port GPIOA
 #define PWM_RIGHT_Pin GPIO_PIN_6
 #define PWM_RIGHT_GPIO_Port GPIOC
 #define DIR_RIGHT_Pin GPIO_PIN_8
