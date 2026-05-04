@@ -33,10 +33,17 @@
 /* USER CODE BEGIN PD */
 
 // defines for linear transformation between servo angle and CCR for desired pulse width
-#define MIN_ANGLE 0
-#define MAX_ANGLE 270
+#define MIN_ANGLE -135
+#define MAX_ANGLE 135
 #define MIN_CCR 8000
 #define MAX_CCR 40000
+
+#define ANGLE_INC 1
+
+// offsets
+#define LEFT_SERVO_OFFSET 0
+#define RIGHT_SERVO_OFFSET 0
+#define HORIZ_OFFSET 0
 
 // ---------------- CAN message constants (can be added to form message) ----------------
 // device id bits [8:5]
@@ -70,11 +77,16 @@
 CAN_HandleTypeDef hcan1;
 
 TIM_HandleTypeDef htim1;
+TIM_HandleTypeDef htim2;
 TIM_HandleTypeDef htim8;
 
 /* USER CODE BEGIN PV */
 CANDevice_t can_dev;
 uint16_t rx_id_list[] = {CAN_MSG_GLOBAL_STOP, CAN_MSG_HEARTBEAT, CAN_MSG_HRZ_ANG, CAN_MSG_VRT_ANG};
+
+float current_hrz_angle = 0;
+float current_vrt_angle = 0;
+float set_angle = 0;
 
 /* USER CODE END PV */
 
@@ -84,6 +96,7 @@ static void MX_GPIO_Init(void);
 static void MX_CAN1_Init(void);
 static void MX_TIM1_Init(void);
 static void MX_TIM8_Init(void);
+static void MX_TIM2_Init(void);
 /* USER CODE BEGIN PFP */
 // CAN function callback plus helpers
 void can_rx_callback(CANDevice_t *device);
@@ -135,19 +148,21 @@ int main(void)
   MX_CAN1_Init();
   MX_TIM1_Init();
   MX_TIM8_Init();
+  MX_TIM2_Init();
   /* USER CODE BEGIN 2 */
-//  // start CAN device
-//  device_can_init(&can_dev, &hcan1);
-//
-//  // config the CAN device filter banks
-//  can_config_filter(&can_dev, rx_id_list, FILTER_LIST_LEN);
-//
-//  // link the can rx callback
-//  link_rx_callback(&can_dev, can_rx_callback);
+  // start CAN device
+  device_can_init(&can_dev, &hcan1);
+
+  // config the CAN device filter banks
+  can_config_filter(&can_dev, rx_id_list, FILTER_LIST_LEN);
+
+  // link the can rx callback
+  link_rx_callback(&can_dev, can_rx_callback);
 
   // start the servo PWMs
   HAL_TIM_PWM_Start(&htim1, TIM_CHANNEL_1);
   HAL_TIM_PWM_Start(&htim8, TIM_CHANNEL_1);
+  HAL_TIM_PWM_Start(&htim2, TIM_CHANNEL_1);
 
   /* USER CODE END 2 */
 
@@ -155,12 +170,12 @@ int main(void)
   /* USER CODE BEGIN WHILE */
   while (1)
   {
-	  set_horizontal_angle(45);
-	  HAL_Delay(1000);
-	  set_horizontal_angle(90);
-	  HAL_Delay(1000);
-	  set_horizontal_angle(135);
-	  HAL_Delay(1000);
+
+	  set_vertical_angle(35);
+	  set_horizontal_angle(15);
+	  set_horizontal_angle(-15);
+	  set_vertical_angle(-10);
+
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
@@ -318,6 +333,55 @@ static void MX_TIM1_Init(void)
 }
 
 /**
+  * @brief TIM2 Initialization Function
+  * @param None
+  * @retval None
+  */
+static void MX_TIM2_Init(void)
+{
+
+  /* USER CODE BEGIN TIM2_Init 0 */
+
+  /* USER CODE END TIM2_Init 0 */
+
+  TIM_MasterConfigTypeDef sMasterConfig = {0};
+  TIM_OC_InitTypeDef sConfigOC = {0};
+
+  /* USER CODE BEGIN TIM2_Init 1 */
+
+  /* USER CODE END TIM2_Init 1 */
+  htim2.Instance = TIM2;
+  htim2.Init.Prescaler = 2;
+  htim2.Init.CounterMode = TIM_COUNTERMODE_UP;
+  htim2.Init.Period = 47999;
+  htim2.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
+  htim2.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_DISABLE;
+  if (HAL_TIM_PWM_Init(&htim2) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  sMasterConfig.MasterOutputTrigger = TIM_TRGO_RESET;
+  sMasterConfig.MasterSlaveMode = TIM_MASTERSLAVEMODE_DISABLE;
+  if (HAL_TIMEx_MasterConfigSynchronization(&htim2, &sMasterConfig) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  sConfigOC.OCMode = TIM_OCMODE_PWM1;
+  sConfigOC.Pulse = 0;
+  sConfigOC.OCPolarity = TIM_OCPOLARITY_HIGH;
+  sConfigOC.OCFastMode = TIM_OCFAST_DISABLE;
+  if (HAL_TIM_PWM_ConfigChannel(&htim2, &sConfigOC, TIM_CHANNEL_1) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /* USER CODE BEGIN TIM2_Init 2 */
+
+  /* USER CODE END TIM2_Init 2 */
+  HAL_TIM_MspPostInit(&htim2);
+
+}
+
+/**
   * @brief TIM8 Initialization Function
   * @param None
   * @retval None
@@ -409,14 +473,6 @@ static void MX_GPIO_Init(void)
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   HAL_GPIO_Init(B1_GPIO_Port, &GPIO_InitStruct);
 
-  /*Configure GPIO pin : PA0 */
-  GPIO_InitStruct.Pin = GPIO_PIN_0;
-  GPIO_InitStruct.Mode = GPIO_MODE_AF_PP;
-  GPIO_InitStruct.Pull = GPIO_NOPULL;
-  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
-  GPIO_InitStruct.Alternate = GPIO_AF1_TIM2;
-  HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
-
   /*Configure GPIO pins : USART_TX_Pin USART_RX_Pin */
   GPIO_InitStruct.Pin = USART_TX_Pin|USART_RX_Pin;
   GPIO_InitStruct.Mode = GPIO_MODE_AF_PP;
@@ -446,12 +502,44 @@ static int linear_map(float input, float in_min, float in_max, float out_min, fl
 
 // set the horizontal platform angle
 static void set_horizontal_angle(float angle) {
-	htim1.Instance->CCR1 = linear_map(angle, MIN_ANGLE, MAX_ANGLE, MIN_CCR, MAX_CCR);
+	htim1.Instance->CCR1 = linear_map(current_hrz_angle, MIN_ANGLE, MAX_ANGLE, MIN_CCR, MAX_CCR);
+
+	float angle_diff = angle - current_hrz_angle;
+
+	if(angle_diff >= 0.0f) {
+		for(current_hrz_angle; current_hrz_angle < angle; current_hrz_angle++) {
+			htim1.Instance->CCR1 = linear_map(current_hrz_angle, MIN_ANGLE, MAX_ANGLE, MIN_CCR, MAX_CCR);
+			HAL_Delay(25);
+		}
+	} else if (angle_diff < 0.0f) {
+		for(current_hrz_angle; current_hrz_angle > angle; current_hrz_angle--) {
+			htim1.Instance->CCR1 = linear_map(current_hrz_angle, MIN_ANGLE, MAX_ANGLE, MIN_CCR, MAX_CCR);
+			HAL_Delay(25);
+		}
+	}
 }
 
 // set the vertical platform angle
 static void set_vertical_angle(float angle) {
-	htim8.Instance->CCR1 = linear_map(angle, MIN_ANGLE, MAX_ANGLE, MIN_CCR, MAX_CCR);
+	htim8.Instance->CCR1 = linear_map(-(current_vrt_angle + LEFT_SERVO_OFFSET), MIN_ANGLE, MAX_ANGLE, MIN_CCR, MAX_CCR);
+	htim2.Instance->CCR1 = linear_map(current_vrt_angle + RIGHT_SERVO_OFFSET, MIN_ANGLE, MAX_ANGLE, MIN_CCR, MAX_CCR);
+
+	float angle_diff = angle - current_vrt_angle;
+
+	if(angle_diff >= 0.0f) {
+		for(current_vrt_angle; current_vrt_angle < angle; current_vrt_angle++) {
+			htim8.Instance->CCR1 = linear_map(-(current_vrt_angle + LEFT_SERVO_OFFSET), MIN_ANGLE, MAX_ANGLE, MIN_CCR, MAX_CCR);
+			htim2.Instance->CCR1 = linear_map(current_vrt_angle + RIGHT_SERVO_OFFSET, MIN_ANGLE, MAX_ANGLE, MIN_CCR, MAX_CCR);
+			HAL_Delay(25);
+		}
+	} else if (angle_diff < 0.0f) {
+		for(current_vrt_angle; current_vrt_angle > angle; current_vrt_angle--) {
+			htim8.Instance->CCR1 = linear_map(-(current_vrt_angle + LEFT_SERVO_OFFSET), MIN_ANGLE, MAX_ANGLE, MIN_CCR, MAX_CCR);
+			htim2.Instance->CCR1 = linear_map(current_vrt_angle + RIGHT_SERVO_OFFSET, MIN_ANGLE, MAX_ANGLE, MIN_CCR, MAX_CCR);
+			HAL_Delay(25);
+		}
+	}
+
 }
 
 // callback for receiving CAN data

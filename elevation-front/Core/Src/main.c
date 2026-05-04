@@ -77,7 +77,7 @@ TIM_HandleTypeDef htim2;
 CANDevice_t can_dev;
 uint16_t rx_id_list[] = {CAN_MSG_GLOBAL_STOP, CAN_MSG_HEARTBEAT, CAN_MSG_SET_HEIGHT};
 
-float current_height = 1.5; // should be the height of the platform and is respective to both motors
+float current_height = 0; // should be the height of the platform and is respective to both motors
 
 // stepping vars
 uint32_t steps_remaining = 0;
@@ -162,6 +162,8 @@ int main(void)
 
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
+  target_height = -1;
+  update_height_flag = 1;
   while (1)
   {
 	  if(get_bottom_limit()) current_height = MIN_HEIGHT;
@@ -414,7 +416,7 @@ static int get_bottom_limit() {
 }
 
 static int get_top_limit() {
-	return HAL_GPIO_ReadPin(GPIOA, TOP_LIMIT_Pin);
+	return 0;// HAL_GPIO_ReadPin(GPIOA, TOP_LIMIT_Pin);
 }
 
 static int dist_to_steps(double height){

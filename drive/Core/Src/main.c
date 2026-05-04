@@ -40,8 +40,8 @@ typedef struct {
 #define TIM_4_DT 0.010
 #define ARR_MAX 2400
 
-#define MOTOR_FWR 0
-#define MOTOR_BCK 1
+#define MOTOR_FWR 1
+#define MOTOR_BCK 0
 
 #define TICKS_PER_REV 966
 
@@ -78,8 +78,8 @@ typedef struct {
 // CAN receive filter IDs
 #define CAN_MSG_GLOBAL_STOP 0x000
 #define CAN_MSG_HEARTBEAT 0x001
-#define CAN_MSG_LEFT_VEL 0x220
-#define CAN_MSG_RIGHT_VEL 0x221
+#define CAN_MSG_CHASSIS_LIN_VEL 0x220
+#define CAN_MSG_CHASSIS_ANG_VEL 0x221
 
 #define FILTER_LIST_LEN 4
 /* USER CODE END PD */
@@ -99,13 +99,18 @@ TIM_HandleTypeDef htim8;
 
 /* USER CODE BEGIN PV */
 CANDevice_t can_dev;
-uint16_t rx_id_list[] = {CAN_MSG_GLOBAL_STOP, CAN_MSG_HEARTBEAT, CAN_MSG_LEFT_VEL, CAN_MSG_RIGHT_VEL};
+uint16_t rx_id_list[] = {CAN_MSG_GLOBAL_STOP, CAN_MSG_HEARTBEAT, CAN_MSG_CHASSIS_LIN_VEL, CAN_MSG_CHASSIS_ANG_VEL};
 Odometry_t robot_odom = {0.0f, 0.0f, 0.0f};
 
 static float vel_right = 0;
 static float rpm_right = 0;
 static float vel_left = 0;
 static float rpm_left = 0;
+
+// Globals for CAN communication and state
+volatile float target_lin_vel = 0.0f; // in m/s
+volatile float target_ang_vel = 0.0f; // in rad/s
+volatile uint8_t global_stop_active = 0; // 0 = running, 1 = e-stopped
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -186,14 +191,14 @@ int main(void)
   MX_CAN1_Init();
   MX_TIM4_Init();
   /* USER CODE BEGIN 2 */
-//  // start CAN device
-//  device_can_init(&can_dev, &hcan1);
-//
-//  // config the CAN device filter banks
-//  can_config_filter(&can_dev, rx_id_list, FILTER_LIST_LEN);
-//
-//  // link the can rx callback
-//  link_rx_callback(&can_dev, can_rx_callback);
+  // start CAN device
+  device_can_init(&can_dev, &hcan1);
+
+  // config the CAN device filter banks
+  can_config_filter(&can_dev, rx_id_list, FILTER_LIST_LEN);
+
+  // link the can rx callback
+  link_rx_callback(&can_dev, can_rx_callback);
 
   // Start the encoder timers
   HAL_TIM_Encoder_Start(&htim3, TIM_CHANNEL_ALL);
@@ -214,16 +219,28 @@ int main(void)
   /* USER CODE BEGIN WHILE */
   while (1)
   {
-	  rpm_right = get_right_rpm();
-	  vel_right = get_right_vel();
+	  // 1. Read current states
+	rpm_right = get_right_rpm();
+	vel_right = get_right_vel();
 
-	  rpm_left = get_left_rpm();
-	  vel_left = get_left_vel();
+	rpm_left = get_left_rpm();
+	vel_left = get_left_vel();
 
-	  set_chassis_vel(0.10, 0);
-	  update_odometry();
+	// 2. Apply motor commands based on CAN targets
+	if (!global_stop_active) {
+		// Feed the latest CAN targets into the chassis kinematics
+		set_chassis_vel(target_lin_vel, target_ang_vel);
+	} else {
+		// Force power to 0 if an E-Stop is active
+		set_left_pwr(0.0f);
+		set_right_pwr(0.0f);
+	}
 
-	  HAL_Delay(50);
+	// 3. Update position on the field
+	update_odometry();
+
+	// 4. Control loop timing
+	HAL_Delay(50);
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
@@ -602,9 +619,36 @@ static void proccess_can_data(uint16_t message_id, uint8_t *data) {
 
     // Copy the 4 bytes back into a float variable
     memcpy(&received_val, data, sizeof(float));
-	switch (message_id) {
-			// TODO fill in
 
+    switch (message_id) {
+        case CAN_MSG_GLOBAL_STOP:
+            // Set the stop flag and kill power immediately
+            global_stop_active = 1;
+            set_left_pwr(0.0f);
+            set_right_pwr(0.0f);
+            break;
+
+        case CAN_MSG_HEARTBEAT:
+            // Visual indicator that the CAN bus is healthy
+            HAL_GPIO_TogglePin(LD2_GPIO_Port, LD2_Pin);
+
+            // If a heartbeat means it's safe to resume, you could clear the stop flag here:
+            // global_stop_active = 0;
+            break;
+
+        case CAN_MSG_CHASSIS_LIN_VEL:
+            // Update the target forward/backward speed (m/s)
+            target_lin_vel = received_val;
+            break;
+
+        case CAN_MSG_CHASSIS_ANG_VEL:
+            // Update the target rotational speed (rad/s)
+            target_ang_vel = received_val;
+            break;
+
+        default:
+            // Unrecognized message ID; ignore
+            break;
     }
 }
 
